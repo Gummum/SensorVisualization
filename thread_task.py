@@ -11,6 +11,7 @@ import traceback
 from view_play_state import PlayStateEnum
 import open3d as o3d
 import zmq
+import logging
 
 class PlyPubTask(QThread):
     finished = Signal()
@@ -36,17 +37,17 @@ class PlyPubTask(QThread):
 
                         points, colors = LidarData.get_lidar_points_np(data)
 
-                        # 如果点云数量发生跳变超过1500，记录当前点云
-                        ct = len(points)
-                        if self.last_ply_count - ct > 1500 and self.last_ply_count > 0:
-                            self.save_point_cloud(points, f'{timestamp}_{ct}.pcd')
-                        self.last_ply_count = ct
-
                         # 临时帧率控制，没有考虑真实时间戳
                         time.sleep((min(self.last_timestamp, timestamp - self.last_timestamp)) / self.speed)
                         self.last_timestamp = timestamp
 
                         self.data_ready.emit(points, colors)  # 发射信号
+
+                        # 如果点云数量发生跳变超过1500，记录当前点云
+                        ct = len(points)
+                        if self.last_ply_count - ct > 1500 and self.last_ply_count > 0:
+                            self.save_point_cloud(points, f'{timestamp}_{ct}.pcd')
+                        self.last_ply_count = ct
 
                     except Exception as e:
                         traceback.print_exc()
@@ -80,17 +81,19 @@ class ZmqPlyPubTask(QThread):
         self.zmq_host = zmq_host
         self.zmq_port = zmq_port
         self.context = zmq.Context()
-        self.zmq_socket = self.context.socket(zmq.SUB)
-        self.zmq_socket.connect('tcp://{}:{}'.format(self.zmq_host, self.zmq_port))
-        self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, '')
         self._is_running = True
 
     def run(self):
         try:
+            self.zmq_socket = self.context.socket(zmq.SUB)
+            self.zmq_socket.connect('tcp://{}:{}'.format(self.zmq_host, self.zmq_port))
+            self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, '')
             while self._is_running:
                 try:
                     data = self.zmq_socket.recv(flags=zmq.NOBLOCK)
                     points, colors = LidarData.get_lidar_points_np(data)
+
+                    self.data_ready.emit(points, colors)  # 发射信号
 
                     # 如果点云数量发生跳变超过1500，记录当前点云
                     ct = len(points)
@@ -98,10 +101,11 @@ class ZmqPlyPubTask(QThread):
                         self.save_point_cloud(points, f'{time}_{ct}.pcd')
                     self.last_ply_count = ct
 
-                    self.data_ready.emit(points, colors)  # 发射信号
                 except zmq.Again:
+                    print('No data received...')
                     self.sleep(0.001)
-                    break
+        except zmq.ZMQError as e:
+            print(f'ZMQError: {e}')
         finally:
             print('Cleaning up ZmqService...')
             self.zmq_socket.close()
@@ -109,3 +113,9 @@ class ZmqPlyPubTask(QThread):
 
     def stop(self):
         self._is_running = False
+
+    def save_point_cloud(self, points, filename):
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        print(f'保存异常点云文件: {filename}')
+        o3d.io.write_point_cloud(filename, pcd)

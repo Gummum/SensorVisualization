@@ -9,17 +9,16 @@ class NetworkDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Network Connection")
-        
+
         # IP地址输入
-        ip_label = QLabel("IP Address:")
+        ip_label = QLabel("IP:")
         self.ip_input = QLineEdit(self)
-        self.ip_input.setPlaceholderText("Enter IP Address")
+        self.ip_input.setText("192.168.2.10")
 
         # 端口号输入
         port_label = QLabel("Port:")
         self.port_input = QLineEdit(self)
-        self.port_input.setPlaceholderText("Enter Port")
-
+        self.port_input.setText("12345")
 
         # 按钮布局
         connect_button = QPushButton("Connect")
@@ -50,7 +49,6 @@ class NetworkDialog(QDialog):
         ip_address = self.ip_input.text()
         try:
             port = int(self.port_input.text())
-            # 发出自定义信号以传递IP地址和端口
             self.connect_requested.emit(ip_address, port)
             self.accept()
         except ValueError:

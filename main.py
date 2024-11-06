@@ -9,7 +9,7 @@ from pyqtgraph.Qt import QtCore
 import pyqtgraph.opengl as gl
 from record_convert import RecordHeader, LidarData
 from queue import Queue
-from thread_task import PlyPubTask
+from thread_task import PlyPubTask, ZmqPlyPubTask
 from view_play_state import PlayStateMachine, PlayingState, PausedState, TerminateState, PlayStateEnum
 import zmq
 from network_dialog import NetworkDialog
@@ -18,8 +18,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.view_recv_thread = None
         self.filename = None
-        self.pub_thread = None
 
         self.setWindowTitle("Sensor Visualization")
         self.setGeometry(100, 100, 800, 600)
@@ -40,13 +40,27 @@ class MainWindow(QMainWindow):
         self.init_3d_view(view_layout)
 
     def init_toolbar(self, toolbar_layout):
+        self.init_view_type_button(toolbar_layout)
         self.init_load_button(toolbar_layout)
+        self.init_network_control(toolbar_layout)
         self.init_play_control(toolbar_layout)
         self.init_speed_control(toolbar_layout)
 
+    # 添加视图类型按钮, 有点云和图像两种
+    def init_view_type_button(self, toolbar_layout):
+        self.view_type_button = QPushButton()
+        toolbar_layout.addWidget(self.view_type_button)
+        self.view_type_button.clicked.connect(self.show_view_type_menu)
+        self.view_type = ["点云", "图像"]
+        self.view_type_button.setText(self.view_type[0])
+        self.view_menu = QMenu(self)
+        for label in self.view_type:
+            action = self.view_menu.addAction(label)
+            action.triggered.connect(lambda checked, l=label: self.set_view_type(l))
+
     # 添加加载按钮
     def init_load_button(self, toolbar_layout):
-        self.load_button = QPushButton("加载点云文件")
+        self.load_button = QPushButton("加载本地文件")
         toolbar_layout.addWidget(self.load_button)
         self.load_button.clicked.connect(self.load_point_cloud)
 
@@ -81,9 +95,9 @@ class MainWindow(QMainWindow):
         self.speed_button.clicked.connect(self.show_speed_menu)
         self.speed_options = [("0.5x", 0.5), ("1.0x", 1.0), ("1.5x", 1.5), ("2.0x", 2.0)]
         self.speed_button.setText(self.speed_options[1][0])
-        self.menu = QMenu(self)
+        self.speed_menu = QMenu(self)
         for label, factor in self.speed_options:
-            action = self.menu.addAction(label)
+            action = self.speed_menu.addAction(label)
             action.setData(factor)
             action.triggered.connect(lambda checked, l=label, s=factor: self.set_speed(s, l))
 
@@ -93,11 +107,21 @@ class MainWindow(QMainWindow):
         toolbar_layout.addWidget(self.network_button)
         self.network_button.clicked.connect(self.show_network_dialog)
 
+    def set_view_type(self, view_type):
+        self.view_type_button.setText(view_type)
+    
+    def show_view_type_menu(self):
+        self.view_menu.exec(self.view_type_button.mapToGlobal(QPoint(0, self.view_type_button.height())))
+
     # 弹出网络连接对话框，输入ip地址和端口号
     def show_network_dialog(self):
         dialog = NetworkDialog()
-        
+        dialog.connect_requested.connect(self.connect_to_server)
+        dialog.exec()
 
+    def connect_to_server(self, ip_address, port):
+        self.view_recv_thread = ZmqPlyPubTask(ip_address, port)
+        self.view_recv_thread.start()
 
     def init_3d_view(self, view_layout):
         # 创建3D视图
@@ -109,27 +133,27 @@ class MainWindow(QMainWindow):
         self.view.addItem(self.grid)
 
     def view_terminte(self):
-        if self.pub_thread:
-            self.pub_thread.stop()
-            self.pub_thread.wait()
-            self.pub_thread = None
+        if self.view_recv_thread:
+            self.view_recv_thread.stop()
+            self.view_recv_thread.wait()
+            self.view_recv_thread = None
             self.state_machine.end_action()
             self.play_button.setText(self.state_text_mapping[type(self.state_machine.state)]["button"])
 
     def show_speed_menu(self):
-        self.menu.exec(self.speed_button.mapToGlobal(QPoint(0, self.speed_button.height())))
+        self.speed_menu.exec(self.speed_button.mapToGlobal(QPoint(0, self.speed_button.height())))
 
     def veiw_control(self):
         if self.filename:
-            if self.pub_thread is None:
+            if self.view_recv_thread is None:
                 self.init_pub_thread(self.filename)
             self.state_machine.play_control()
             self.play_button.setText(self.state_text_mapping[type(self.state_machine.state)]["button"])
-            self.pub_thread.set_play_state(self.state_text_mapping[type(self.state_machine.state)]["state"].value)
+            self.view_recv_thread.set_play_state(self.state_text_mapping[type(self.state_machine.state)]["state"].value)
 
     def set_speed(self, factor, text):
         self.speed_button.setText(text)
-        self.pub_thread.set_speed(factor)
+        self.view_recv_thread.set_speed(factor)
 
     def update_point_cloud(self, points, colors):
         try:
@@ -182,16 +206,16 @@ class MainWindow(QMainWindow):
         self.update_point_cloud(points, colors)
 
     def init_pub_thread(self, filename):
-        self.pub_thread = PlyPubTask(filename)
-        self.pub_thread.start()
-        self.pub_thread.data_ready.connect(self.update_point_cloud)
-        self.pub_thread.finished.connect(self.view_terminte)
+        self.view_recv_thread = PlyPubTask(filename)
+        self.view_recv_thread.start()
+        self.view_recv_thread.data_ready.connect(self.update_point_cloud)
+        self.view_recv_thread.finished.connect(self.view_terminte)
 
     def closeEvent(self, event):
-        if self.pub_thread:
-            self.pub_thread.stop()
-            self.pub_thread.wait()
-            self.pub_thread = None
+        if self.view_recv_thread:
+            self.view_recv_thread.stop()
+            self.view_recv_thread.wait()
+            self.view_recv_thread = None
         event.accept()
 
 if __name__ == '__main__':
