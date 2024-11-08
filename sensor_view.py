@@ -36,6 +36,8 @@ class SensorView:
         self.filename = filename
 
     def open_file(self, filename):
+        if self.pub_task:
+            self.terminate()
         self.filename = filename
         self.init_pub_task(DataOriginType.FILE)
 
@@ -91,6 +93,8 @@ class SensorView:
         return self.state_machine.state
 
     def start_connect_network(self, host, port):
+        if self.pub_task:
+            self.terminate()
         self.ip = host
         self.port = port
         self.init_pub_task(DataOriginType.NETWORK)
