@@ -7,6 +7,7 @@ class PlayStateEnum(Enum):
     TERMINATE = 3
 
 class PlayState():
+    state_enum = None
     def play_control(self, state_machine):
         raise NotImplementedError
 
@@ -14,6 +15,7 @@ class PlayState():
         raise NotImplementedError
 
 class PlayingState(PlayState):
+    state_enum = PlayStateEnum.PLAYING
     def play_control(self, state_machine):
         state_machine.set_state(PausedState())
 
@@ -21,6 +23,7 @@ class PlayingState(PlayState):
         state_machine.set_state(TerminateState())
 
 class PausedState(PlayState):
+    state_enum = PlayStateEnum.PAUSED
     def play_control(self, state_machine):
         state_machine.set_state(PlayingState())
 
@@ -28,6 +31,7 @@ class PausedState(PlayState):
         pass
 
 class TerminateState(PlayState):
+    state_enum = PlayStateEnum.TERMINATE
     def play_control(self, state_machine):
         state_machine.set_state(PlayingState())
         pass

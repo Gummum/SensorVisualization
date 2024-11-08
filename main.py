@@ -9,18 +9,17 @@ from pyqtgraph.Qt import QtCore
 import pyqtgraph.opengl as gl
 from record_convert import RecordHeader, LidarData
 from queue import Queue
-from thread_task import PlyPubTask, ZmqPlyPubTask
-from view_play_state import PlayStateMachine, PlayingState, PausedState, TerminateState, PlayStateEnum
-import zmq
+from view_play_state import PlayingState, PausedState, TerminateState, PlayStateEnum
 from network_dialog import NetworkDialog
+from sensor_view import SensorPointCloudView
+from logger_manager import LoggerManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.view_recv_thread = None
-        self.filename = None
-
+        self.sensor_view = SensorPointCloudView()
+        self.logger = LoggerManager.get_logger(self.__class__.__name__)
         self.setWindowTitle("Sensor Visualization")
         self.setGeometry(100, 100, 800, 600)
 
@@ -39,6 +38,7 @@ class MainWindow(QMainWindow):
         self.init_toolbar(toolbar_layout)
         self.init_3d_view(view_layout)
 
+    # 初始化工具栏
     def init_toolbar(self, toolbar_layout):
         self.init_view_type_button(toolbar_layout)
         self.init_load_button(toolbar_layout)
@@ -62,25 +62,24 @@ class MainWindow(QMainWindow):
     def init_load_button(self, toolbar_layout):
         self.load_button = QPushButton("加载本地文件")
         toolbar_layout.addWidget(self.load_button)
-        self.load_button.clicked.connect(self.load_point_cloud)
+        self.load_button.clicked.connect(self.open_local_file)
 
+    # 初始化播放控制
     def init_play_control(self, toolbar_layout):
         self.state_text_mapping = {
             PlayingState: {"state": PlayStateEnum.PLAYING, "button": "暂停"},
             PausedState: {"state": PlayStateEnum.PAUSED, "button": "播放"},
             TerminateState: {"state": PlayStateEnum.TERMINATE, "button": "播放"}
         }
-        self.state_machine = PlayStateMachine()
-        self.init_play_button(toolbar_layout, self.state_machine.state)
-        self.init_terminte_button(toolbar_layout, self.state_machine.state)
+        self.init_play_button(toolbar_layout, self.sensor_view.get_current_state())
+        self.init_terminte_button(toolbar_layout, self.sensor_view.get_current_state())
 
     # 添加播放按钮
     def init_play_button(self, toolbar_layout, state):
-        # 初始化播放按钮状态
         self.play_button = QPushButton()
         toolbar_layout.addWidget(self.play_button)
-        self.play_button.clicked.connect(self.veiw_control)
         self.play_button.setText(self.state_text_mapping[type(state)]["button"])
+        self.play_button.clicked.connect(self.view_control)
 
     # 添加结束按钮
     def init_terminte_button(self, toolbar_layout, state):
@@ -107,6 +106,19 @@ class MainWindow(QMainWindow):
         toolbar_layout.addWidget(self.network_button)
         self.network_button.clicked.connect(self.show_network_dialog)
 
+    # 打开本地文件
+    def open_local_file(self):
+        data_directory = os.path.join(os.getcwd(), "data")
+        title, filter = self.sensor_view.get_file_title_filter()
+        filename, _ = QFileDialog.getOpenFileName(
+            self, 
+            title, 
+            data_directory, 
+            filter
+        )
+        if filename:
+            self.sensor_view.open_file(filename)
+
     def set_view_type(self, view_type):
         self.view_type_button.setText(view_type)
     
@@ -120,102 +132,41 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def connect_to_server(self, ip_address, port):
-        self.view_recv_thread = ZmqPlyPubTask(ip_address, port)
-        self.view_recv_thread.start()
+        self.sensor_view.start_connect_network(ip_address, port)
 
     def init_3d_view(self, view_layout):
-        # 创建3D视图
-        self.view = gl.GLViewWidget()
-        view_layout.addWidget(self.view)
-
-        # 添加坐标轴
-        self.grid = gl.GLGridItem()
-        self.view.addItem(self.grid)
+        view_layout.addWidget(self.sensor_view.get_view())
 
     def view_terminte(self):
-        if self.view_recv_thread:
-            self.view_recv_thread.stop()
-            self.view_recv_thread.wait()
-            self.view_recv_thread = None
-            self.state_machine.end_action()
-            self.play_button.setText(self.state_text_mapping[type(self.state_machine.state)]["button"])
+        if self.sensor_view.terminate():
+            new_state = self.sensor_view.get_current_state()
+            state_text = self.state_text_mapping[type(new_state)]["button"]
+            self.play_button.setText(state_text)
 
     def show_speed_menu(self):
         self.speed_menu.exec(self.speed_button.mapToGlobal(QPoint(0, self.speed_button.height())))
 
-    def veiw_control(self):
-        if self.filename:
-            if self.view_recv_thread is None:
-                self.init_pub_thread(self.filename)
-            self.state_machine.play_control()
-            self.play_button.setText(self.state_text_mapping[type(self.state_machine.state)]["button"])
-            self.view_recv_thread.set_play_state(self.state_text_mapping[type(self.state_machine.state)]["state"].value)
+    def view_control(self):
+        current_state = self.sensor_view.get_current_state().state_enum
+        success = False
+
+        if current_state == PlayStateEnum.PLAYING:
+            success = self.sensor_view.pause()
+        elif current_state == PlayStateEnum.PAUSED:
+            success = self.sensor_view.playing()
+        elif current_state == PlayStateEnum.TERMINATE:
+            success = self.sensor_view.playing()
+
+        if success:
+            new_state = self.sensor_view.get_current_state()
+            state_text = self.state_text_mapping[type(new_state)]["button"]
+            self.play_button.setText(state_text)
 
     def set_speed(self, factor, text):
         self.speed_button.setText(text)
-        self.view_recv_thread.set_speed(factor)
-
-    def update_point_cloud(self, points, colors):
-        try:
-            # 清除之前的点云
-            self.view.clear()
-            self.view.addItem(self.grid)
-
-            # 创建散点图
-            scatter = gl.GLScatterPlotItem(
-                pos=points,
-                color=colors,
-                size=0.5,
-                pxMode=True
-            )
-            self.view.addItem(scatter)
-
-            # 调整视角
-            # self.view.setCameraPosition(distance=40)
-        except Exception as e:
-            print('Error while drawing item:')
-
-    def load_point_cloud(self):
-        data_directory = os.path.join(os.getcwd(), "data")
-        filename, _ = QFileDialog.getOpenFileName(
-            self, 
-            "选择点云文件", 
-            data_directory, 
-            "record Files (*.record);;PCD files (*.pcd);;PLY files (*.ply)"
-        )
-
-        self.load_file(filename)
-
-    def load_file(self, filename):
-        if filename:
-            self.filename = filename
-            if filename.endswith('.record'):
-                self.veiw_control()
-            elif filename.endswith('.pcd') or filename.endswith('.ply'):
-                self.load_point_cloud_file(filename)
-        
-    def load_point_cloud_file(self, filename):
-        pcd = o3d.io.read_point_cloud(filename)
-        points = np.asarray(pcd.points)
-        if len(pcd.colors) > 0:
-            colors = np.asarray(pcd.colors)
-        else:
-            colors = np.ones_like(points) * 0.5
-        colors[:, 2] = 1.0
-
-        self.update_point_cloud(points, colors)
-
-    def init_pub_thread(self, filename):
-        self.view_recv_thread = PlyPubTask(filename)
-        self.view_recv_thread.start()
-        self.view_recv_thread.data_ready.connect(self.update_point_cloud)
-        self.view_recv_thread.finished.connect(self.view_terminte)
+        self.sensor_view.set_speed(factor)
 
     def closeEvent(self, event):
-        if self.view_recv_thread:
-            self.view_recv_thread.stop()
-            self.view_recv_thread.wait()
-            self.view_recv_thread = None
         event.accept()
 
 if __name__ == '__main__':

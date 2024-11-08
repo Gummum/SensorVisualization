@@ -13,12 +13,12 @@ class NetworkDialog(QDialog):
         # IP地址输入
         ip_label = QLabel("IP:")
         self.ip_input = QLineEdit(self)
-        self.ip_input.setText("192.168.2.10")
+        self.ip_input.setText("9.8.145.227")
 
         # 端口号输入
         port_label = QLabel("Port:")
         self.port_input = QLineEdit(self)
-        self.port_input.setText("12345")
+        self.port_input.setText("5558")
 
         # 按钮布局
         connect_button = QPushButton("Connect")
