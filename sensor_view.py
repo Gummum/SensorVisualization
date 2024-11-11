@@ -74,6 +74,7 @@ class SensorView:
             self.pub_task.stop()
             self.pub_task.wait()
             self.pub_task = None
+            self.clear_view()
             self.state_machine.end_action()
             return True
         return False
@@ -98,6 +99,9 @@ class SensorView:
         self.ip = host
         self.port = port
         self.init_pub_task(DataOriginType.NETWORK)
+
+    def clear_view(self):
+        raise NotImplementedError
 
     def connect_network(self, host, port):
         raise NotImplementedError
@@ -135,6 +139,10 @@ class SensorPointCloudView(SensorView):
         self.pub_task.start()
         self.pub_task.data_ready.connect(self.update_point_cloud)
         self.pub_task.finished.connect(self.terminate)
+
+    def clear_view(self):
+        self.view.clear()
+        self.view.addItem(self.grid)
 
     def update_point_cloud(self, points, colors):
         try:

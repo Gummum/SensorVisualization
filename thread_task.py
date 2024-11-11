@@ -93,10 +93,8 @@ class LocalPlyPubTask(BasePlyPubTask):
             if self.play_state == PlayStateEnum.PLAYING:
                 if not self._process_single_frame(file_handler):
                     break
-                self.logger.info('处理单帧数据完成')
             elif self.play_state == PlayStateEnum.PAUSED:
                 time.sleep(0.05)
-                self.logger.info('暂停状态，等待处理')
             else:
                 break
 

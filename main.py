@@ -118,6 +118,9 @@ class MainWindow(QMainWindow):
         )
         if filename:
             self.sensor_view.open_file(filename)
+            new_state = self.sensor_view.get_current_state()
+            state_text = self.state_text_mapping[type(new_state)]["button"]
+            self.play_button.setText(state_text)
 
     def set_view_type(self, view_type):
         self.view_type_button.setText(view_type)
@@ -133,6 +136,9 @@ class MainWindow(QMainWindow):
 
     def connect_to_server(self, ip_address, port):
         self.sensor_view.start_connect_network(ip_address, port)
+        new_state = self.sensor_view.get_current_state()
+        state_text = self.state_text_mapping[type(new_state)]["button"]
+        self.play_button.setText(state_text)
 
     def init_3d_view(self, view_layout):
         view_layout.addWidget(self.sensor_view.get_view())
