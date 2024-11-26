@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout,
                              QWidget, QPushButton, QFileDialog)
 from PySide6.QtCore import QThread, Signal, QTimer
 from queue import Queue
-from record_convert import RecordHeader, LidarData
+from record_convert import RecordHeader, LidarData, SensorImgData
 import numpy as np
 import pyqtgraph.opengl as gl
 import time
@@ -12,7 +12,7 @@ import open3d as o3d
 import zmq
 from logger_manager import LoggerManager
 
-class BasePlyPubTask(QThread):
+class BasePubTask(QThread):
     data_ready = Signal(object, object)
     task_finished = Signal()
     def __init__(self):
@@ -40,13 +40,20 @@ class BasePlyPubTask(QThread):
     def set_play_state(self, play_state):
         self.logger.info(f'设置播放状态: {play_state}')
         self.play_state = play_state
-        
+
+    def set_speed(self, speed):
+        self.speed = speed
+
+class BasePlyPubTask(BasePubTask):
+    def __init__(self):
+        super().__init__()
+
     def save_point_cloud(self, points, filename):
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points)
         self.logger.info(f'保存异常点云文件: {filename}')
         o3d.io.write_point_cloud(filename, pcd)
-        
+
     def check_point_cloud_anomaly(self, points, timestamp):
         ct = len(points)
         if self.last_ply_count - ct > 1500 and self.last_ply_count > 0:
@@ -55,8 +62,42 @@ class BasePlyPubTask(QThread):
             self.save_point_cloud(points, f'{short_ts}_{ct}.pcd')
         self.last_ply_count = ct
 
-    def set_speed(self, speed):
-        self.speed = speed
+class BaseImgPubTask(BasePubTask):
+    def __init__(self):
+        super().__init__()
+
+class ZmqService:
+    def __init__(self, zmq_host: str, zmq_port: str):
+        self.logger = LoggerManager.get_logger(self.__class__.__name__)
+        self.zmq_host = zmq_host
+        self.zmq_port = zmq_port
+        self.context = zmq.Context()
+        self.zmq_socket = None
+
+    def __del__(self):
+        self.cleanup()
+
+    def cleanup(self):
+        if self.zmq_socket:
+            self.zmq_socket.close()
+            self.zmq_socket = None
+        if self.context:
+            self.context.term()
+            self.context = None
+
+    def connect(self):
+        try:
+            self.zmq_socket = self.context.socket(zmq.SUB)
+            addr = f'tcp://{self.zmq_host}:{self.zmq_port}'
+            self.zmq_socket.connect(addr)
+            self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, '')
+            self.logger.info(f'已连接到ZMQ服务器: {addr}')
+        except zmq.ZMQError as e:
+            self.logger.error(f'ZMQ连接错误: {e}')
+            raise
+
+    def receive_data(self) -> bytes:
+        return self.zmq_socket.recv(flags=zmq.NOBLOCK)
 
 class LocalPlyPubTask(BasePlyPubTask):
     def __init__(self, filename, speed=1.0):
@@ -64,6 +105,7 @@ class LocalPlyPubTask(BasePlyPubTask):
         self.logger = LoggerManager.get_logger(self.__class__.__name__)
         self.filename = filename
         self.last_timestamp = 0.0
+        self.speed = speed
 
     def _run_impl(self):
         try:
@@ -126,34 +168,19 @@ class ZmqPlyPubTask(BasePlyPubTask):
     def __init__(self, zmq_host: str, zmq_port: str):
         super().__init__()
         self.logger = LoggerManager.get_logger(self.__class__.__name__)
-        self.zmq_host = zmq_host
-        self.zmq_port = zmq_port
-        self.context = zmq.Context()
-        self.zmq_socket = None
+        self.zmq_service = ZmqService(zmq_host, zmq_port)
 
     def __del__(self):
-        self.cleanup()
-
-    def cleanup(self):
-        if self.zmq_socket:
-            self.zmq_socket.close()
-            self.zmq_socket = None
-        if self.context:
-            self.context.term()
-            self.context = None
+        self.zmq_service.cleanup()
 
     def _run_impl(self):
         try:
-            self.zmq_socket = self.context.socket(zmq.SUB)
-            addr = f'tcp://{self.zmq_host}:{self.zmq_port}'
-            self.zmq_socket.connect(addr)
-            self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, '')
-            self.logger.info(f'已连接到ZMQ服务器: {addr}')
+            self.zmq_service.connect()
 
             while self._is_running:
                 if self.play_state == PlayStateEnum.PLAYING:
                     try:
-                        data = self.zmq_socket.recv(flags=zmq.NOBLOCK)
+                        data = self.zmq_service.receive_data()
                         points, colors = LidarData.get_lidar_points_np(data)
                         self.data_ready.emit(points, colors)
                         self.check_point_cloud_anomaly(points, time.time())
@@ -168,4 +195,47 @@ class ZmqPlyPubTask(BasePlyPubTask):
             self.logger.error(f'ZMQ连接错误: {e}')
         finally:
             self.logger.info('正在清理ZMQ连接...')
-            self.cleanup()
+            self.zmq_service.cleanup()
+
+class ZmqImgPubTask(BaseImgPubTask):
+    def __init__(self, zmq_host: str, zmq_port: str):
+        super().__init__()
+        self.logger = LoggerManager.get_logger(self.__class__.__name__)
+        self.zmq_service = ZmqService(zmq_host, zmq_port)
+
+    def __del__(self):
+        self.zmq_service.cleanup()
+
+    def _run_impl(self):
+        try:
+            self.zmq_service.connect()
+
+            while self._is_running:
+                if self.play_state == PlayStateEnum.PLAYING:
+                    try:
+                        data = self.zmq_service.receive_data()
+                        # 打印数据长度
+                        self.logger.info(f'接收到的数据长度: {len(data)}')
+                        left_img, right_img = SensorImgData.get_sensor_img_data(data)
+                        self.data_ready.emit(right_img, 1)
+                    except zmq.Again:
+                        time.sleep(0.001)
+                elif self.play_state == PlayStateEnum.PAUSED:
+                    time.sleep(0.05)
+                else:
+                    break
+            self.logger.info('结束ZMQ数据接收')
+        except zmq.ZMQError as e:
+            self.logger.error(f'ZMQ连接错误: {e}')
+        finally:
+            self.logger.info('正在清理ZMQ连接...')
+            self.zmq_service.cleanup()
+
+class LocalImgPubTask(BaseImgPubTask):
+    def __init__(self, filename, speed=1.0):
+        super().__init__()
+        self.logger = LoggerManager.get_logger(self.__class__.__name__)
+        self.filename = filename
+        self.last_timestamp = 0.0
+        self.speed = speed
+

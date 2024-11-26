@@ -13,7 +13,7 @@ class NetworkDialog(QDialog):
         # IP地址输入
         ip_label = QLabel("IP:")
         self.ip_input = QLineEdit(self)
-        self.ip_input.setText("9.8.145.227")
+        self.ip_input.setText("9.199.50.87")
 
         # 端口号输入
         port_label = QLabel("Port:")
