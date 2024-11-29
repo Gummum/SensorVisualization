@@ -173,7 +173,14 @@ class ImuData(RecordHeader):
     @staticmethod
     def get_imu_data(data):
         imu_data = imuMetaData.from_buffer_copy(bytearray(data))
-        return imu_data
+        ax = imu_data.ax
+        ay = imu_data.ay
+        az = imu_data.az
+        gx = imu_data.gx
+        gy = imu_data.gy
+        gz = imu_data.gz
+        stamp = imu_data.stamp
+        return ax, ay, az, gx, gy, gz, stamp
 
 class SensorImgData(RecordHeader):
     def __init__(self):

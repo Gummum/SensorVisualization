@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout,
                              QWidget, QPushButton, QFileDialog)
 from PySide6.QtCore import QThread, Signal, QTimer
 from queue import Queue
-from record_convert import RecordHeader, LidarData, SensorImgData
+from record_convert import RecordHeader, LidarData, SensorImgData, ImuData
 import numpy as np
 import pyqtgraph.opengl as gl
 import time
@@ -238,4 +238,75 @@ class LocalImgPubTask(BaseImgPubTask):
         self.filename = filename
         self.last_timestamp = 0.0
         self.speed = speed
+
+class LocalImuPubTask(BasePubTask):
+    def __init__(self, filename):
+        super().__init__()
+        self.logger = LoggerManager.get_logger(self.__class__.__name__)
+        self.filename = filename
+        self.last_timestamp = 0.0
+
+    def _run_impl(self):
+        try:
+            with open(self.filename, 'rb') as f:
+                while self._is_running:
+                    if self.play_state == PlayStateEnum.PLAYING:
+
+                        timestamp, data_size, data = RecordHeader.read_record_head_a_data(f, 'dds_imu')
+                        if not data:
+                            self.logger.info('文件读取完成')
+                        ax, ay, az, gx, gy, gz, stamp = ImuData.get_imu_data(data)
+                        acc = [ax, ay, az]
+                        gyro = [gx, gy, gz]
+
+                        # 帧率控制
+
+                        # if self.last_timestamp > 0:
+                        #     sleep_time = (stamp - self.last_timestamp) / self.speed
+                        #     if sleep_time > 0:
+                        #         time.sleep(sleep_time)
+                        # self.last_timestamp = stamp
+
+                        sleep_time = min(self.last_timestamp, timestamp - self.last_timestamp)
+                        time.sleep(sleep_time / self.speed)
+                        self.last_timestamp = timestamp
+
+                        self.data_ready.emit(acc, gyro)
+                    elif self.play_state == PlayStateEnum.PAUSED:
+                        time.sleep(0.05)
+                    else:
+                        break
+        except Exception as e:
+            self.logger.error(f'IMU数据处理错误: {e}')
+        finally:
+            self.task_finished.emit()
+
+class ZmqImuPubTask(BasePubTask):
+    def __init__(self, zmq_host: str, zmq_port: str):
+        super().__init__()
+        self.logger = LoggerManager.get_logger(self.__class__.__name__)
+        self.zmq_service = ZmqService(zmq_host, zmq_port)
+
+    def _run_impl(self):
+        try:
+            self.zmq_service.connect()
+            while self._is_running:
+                if self.play_state == PlayStateEnum.PLAYING:
+                    try:
+                        data = self.zmq_service.receive_data()
+
+                        ax, ay, az, gx, gy, gz, stamp = ImuData.get_imu_data(data)
+                        acc = [ax, ay, az]
+                        gyro = [gx, gy, gz]
+                        self.data_ready.emit(acc, gyro)
+                    except zmq.Again:
+                        time.sleep(0.001)
+                elif self.play_state == PlayStateEnum.PAUSED:
+                    time.sleep(0.05)
+                else:
+                    break
+        except Exception as e:
+            self.logger.error(f'IMU数据处理错误: {e}')
+        finally:
+            self.task_finished.emit()
 
