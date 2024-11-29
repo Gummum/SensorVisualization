@@ -53,7 +53,7 @@ class image_info_t(LittleEndianStructure):
         ("sensor_id", c_uint16),
         ("pipeline_id", c_uint32),
         ("frame_id", c_uint32),
-        ("time_stamp", c_uint64),
+        ("time_stamp", c_double),
         ("tv", timeval),
         ("buf_index", c_int32),
         ("img_format", c_int32),
@@ -157,13 +157,13 @@ class LidarData(RecordHeader):
 
     @staticmethod
     def get_lidar_points_np(points_data):
-        _, points, intensities = LidarData.get_lidar_points(points_data)
+        st, points, intensities = LidarData.get_lidar_points(points_data)
 
         points = np.array(points)
         colors = np.ones_like(points) * 0.5
         colors[:, 2] = intensities
 
-        return points, colors
+        return points, colors, st
 
 class ImuData(RecordHeader):
     def __init__(self):
@@ -198,14 +198,16 @@ class SensorImgData(RecordHeader):
         r_height, r_width = 480, 640
         l_img = [l_y, l_uv, l_height, l_width]
         r_img = [r_y, r_uv, r_height, r_width]
-        return l_img, r_img
+        st = double_img_obj.left_img.hb_vio_buffer.img_info.time_stamp
+        return l_img, r_img, st
 
     @staticmethod
     def get_sensor_img_data(data):
         double_img_obj = shm_img_t.from_buffer_copy(bytearray(data))
         left_img = SensorImgData.convert_img(double_img_obj.left_img.yuv_data)
         right_img = SensorImgData.convert_img(double_img_obj.right_img.yuv_data)
-        return left_img, right_img
+        st = double_img_obj.left_img.hb_vio_buffer.img_info.time_stamp
+        return left_img, right_img, st
 
     @staticmethod
     def convert_img(data):

@@ -13,7 +13,7 @@ import zmq
 from logger_manager import LoggerManager
 
 class BasePubTask(QThread):
-    data_ready = Signal(object, object)
+    data_ready = Signal(object, object, object)
     task_finished = Signal()
     def __init__(self):
         super().__init__()
@@ -149,7 +149,7 @@ class LocalPlyPubTask(BasePlyPubTask):
                 return False
 
             # 处理点云数据
-            points, colors = LidarData.get_lidar_points_np(data)
+            points, colors, st = LidarData.get_lidar_points_np(data)
 
             # 帧率控制
             sleep_time = min(self.last_timestamp, timestamp - self.last_timestamp)
@@ -157,7 +157,7 @@ class LocalPlyPubTask(BasePlyPubTask):
             self.last_timestamp = timestamp
 
             # 发送数据并检查异常
-            self.data_ready.emit(points, colors)
+            self.data_ready.emit(points, colors, st)
             self.check_point_cloud_anomaly(points, timestamp)
             return True
         except Exception as e:
@@ -181,8 +181,8 @@ class ZmqPlyPubTask(BasePlyPubTask):
                 if self.play_state == PlayStateEnum.PLAYING:
                     try:
                         data = self.zmq_service.receive_data()
-                        points, colors = LidarData.get_lidar_points_np(data)
-                        self.data_ready.emit(points, colors)
+                        points, colors, st = LidarData.get_lidar_points_np(data)
+                        self.data_ready.emit(points, colors, st)
                         self.check_point_cloud_anomaly(points, time.time())
                     except zmq.Again:
                         time.sleep(0.001)
@@ -216,8 +216,8 @@ class ZmqImgPubTask(BaseImgPubTask):
                         data = self.zmq_service.receive_data()
                         # 打印数据长度
                         self.logger.info(f'接收到的数据长度: {len(data)}')
-                        left_img, right_img = SensorImgData.get_sensor_img_data(data)
-                        self.data_ready.emit(right_img, 1)
+                        left_img, right_img, st = SensorImgData.get_sensor_img_data(data)
+                        self.data_ready.emit(right_img, 1, st)
                     except zmq.Again:
                         time.sleep(0.001)
                 elif self.play_state == PlayStateEnum.PAUSED:
@@ -271,7 +271,7 @@ class LocalImuPubTask(BasePubTask):
                         time.sleep(sleep_time / self.speed)
                         self.last_timestamp = timestamp
 
-                        self.data_ready.emit(acc, gyro)
+                        self.data_ready.emit(acc, gyro, stamp)
                     elif self.play_state == PlayStateEnum.PAUSED:
                         time.sleep(0.05)
                     else:
@@ -298,7 +298,7 @@ class ZmqImuPubTask(BasePubTask):
                         ax, ay, az, gx, gy, gz, stamp = ImuData.get_imu_data(data)
                         acc = [ax, ay, az]
                         gyro = [gx, gy, gz]
-                        self.data_ready.emit(acc, gyro)
+                        self.data_ready.emit(acc, gyro, stamp)
                     except zmq.Again:
                         time.sleep(0.001)
                 elif self.play_state == PlayStateEnum.PAUSED:

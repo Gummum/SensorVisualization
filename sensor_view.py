@@ -179,7 +179,7 @@ class SensorPointCloudView(SensorView):
         # self.view.addItem(self.grid)
         pass
 
-    def update_point_cloud(self, points, colors):
+    def update_point_cloud(self, points, colors, st):
         try:
             self.view.clear()
             self.view.addItem(self.grid)
@@ -222,7 +222,7 @@ class SensorImageView(SensorView):
     def clear_view(self):
         pass
 
-    def update_image(self, img, id):
+    def update_image(self, img, id, st):
         try:
             self.view.setPixmap(QPixmap.fromImage(img))
         except Exception as e:
@@ -316,15 +316,9 @@ class SensorImuView(SensorView):
         self.auto_range_enabled = False
         self.auto_range_timer.start(3000)
 
-    def update_imu_data(self, acc, gyro):
+    def update_imu_data(self, acc, gyro, st):
         try:
-            timestamp = time.time()
-            # 如果是第一个数据点，将时间戳归零
-            if not self.timestamps:
-                self.time_offset = timestamp
-
-            # 更新数据缓存
-            self.timestamps.append(timestamp - self.time_offset)
+            self.timestamps.append(st)
             for i in range(3):
                 self.acc_data[i].append(acc[i])
                 self.gyro_data[i].append(gyro[i])
