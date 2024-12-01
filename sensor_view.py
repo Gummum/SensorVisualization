@@ -254,7 +254,7 @@ class SensorImuView(SensorView):
 
         # 更新计数器
         self.update_counter = 0
-        self.max_update_counter = 10
+        self.max_update_counter = 20
 
         # 设置显示的时间范围（例如最近10秒的数据）
         self.display_time_range = 5  # 单位：秒
@@ -387,6 +387,3 @@ class SensorViewManager:
     def terminate_all(self):
         for view in self._views:
             view.terminate()
-
-# 代办事项
-# 1. imu的数据显示使用的时间戳是有问题的。
