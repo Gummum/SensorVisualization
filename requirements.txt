@@ -33,6 +33,8 @@ nbformat==5.10.4
 nest-asyncio==1.6.0
 numpy==1.23.5
 open3d==0.18.0
+opencv-python==4.10.0
+opencv-python-headless==4.10.0
 packaging==24.1
 parso==0.8.4
 platformdirs==4.3.6
@@ -47,6 +49,7 @@ PySide6==6.8.0.2
 PySide6_Addons==6.8.0.2
 PySide6_Essentials==6.8.0.2
 pywin32==308
+pyzmq==26.2.0
 referencing==0.35.1
 requests==2.32.3
 retrying==1.3.4
@@ -62,3 +65,4 @@ wcwidth==0.2.13
 Werkzeug==3.0.6
 widgetsnbextension==4.0.13
 zipp==3.20.2
+zmq==0.0.0
